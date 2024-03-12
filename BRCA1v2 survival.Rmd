@@ -1,0 +1,73 @@
+---
+title: "BRCA1v2 survival"
+output: html_document
+date: "2024-03-03"
+---
+#Creating Kaplan Meier survival plit using metabric publically available data from CBioPortal to compare survival times of breast cancer patients that have either BRCA1 or BRCA2 mutations.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("/Users/nataliepilla/Desktop/BRCA\ project")
+library(survival)
+library(dplyr)
+library(survminer)
+library(cbioportalR)
+library(tidyverse)
+```
+
+```{r}
+set_cbioportal_db("public")
+all_studies <- available_studies()
+all_studies
+
+#studyid for metabric is brca_metabric
+all_studies %>%
+  filter(studyId %in% c("brca_metabric", "brca_tcga_pub"))
+get_study_info("brca_metabric") %>%
+  t()
+
+#sorting for patients with BRCA1 & BRCA2 mutation status
+mut <- get_mutations_by_study("brca_metabric")
+mut <- filter(mut, hugoGeneSymbol=='BRCA1' | hugoGeneSymbol== "BRCA2",) 
+mut <- arrange(mut, mut$patientId)
+
+#remove patient with dual positive BRCA1 and BRCA2 mutation
+mut <- filter(mut, patientId != "MB-6060")
+
+#remove information on additional mutations in the same patient, so that patient is only listed once
+mut <- mut[-c(35,40,48), ]
+
+#acquire RFS_status and RFS_Months
+status <- get_clinical_by_patient(patient_id = mut$patientId, study_id = "brca_metabric", clinical_attribute = "RFS_STATUS")
+status
+
+time <- get_clinical_by_patient(patient_id = mut$patientId, study_id = "brca_metabric", clinical_attribute = "RFS_MONTHS")
+time
+
+#filter data sets so that we only have the patients that we have info on both RFS_status AND RFS_months for
+status <- filter(status, status$patientId %in% time$patientId)
+time <-filter(time, time$patientId %in% status$patientId)
+time <- arrange(time, time$patientId)
+status <- arrange(status, status$patientId)
+
+mut <- filter(mut, mut$patientId %in% time$patientId)
+mut <- arrange(mut, mut$patientId)
+mut
+
+#generate data frame with the combined RFS data and mutation status for each patient
+df <- tibble(patientId = time$patientId, time = time$value, RFS_status = status$value, mutation = mut$hugoGeneSymbol)
+df
+df <- mutate(df, RFS_status = if_else(RFS_status == "0:Not Recurred", 0, 1))
+
+```
+
+```{r}
+#build survival object 
+fit <- survfit(Surv(as.numeric(df$time), df$RFS_status) ~ df$mutation, data = df)
+head(fit)
+
+#create kaplan meier curve
+ggsurvplot(fit, xlab = "Months", ylab = "Relapse Free Survival", risk.table = T, pval = T)
+
+```
+
+
