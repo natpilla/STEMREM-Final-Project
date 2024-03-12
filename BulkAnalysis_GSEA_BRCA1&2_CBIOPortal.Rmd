@@ -1,0 +1,213 @@
+---
+title: "Final Project"
+output: html_document
+date: "2024-03-04"
+---
+#Retrieving bulk RNA-seq TCGA data from CBioPortal and analyzing differentially expressed genes/pathways in BRCA1/BRCA2 mutant breast cancer patients. 
+```{r}
+#Run the required packages 
+library(cbioportalR)
+library(dplyr)
+library(DESeq2)
+library(EnhancedVolcano)
+library(ComplexHeatmap)
+```
+
+```{r}
+#Log into CBIO portal 
+set_cbioportal_db("public")
+test_cbioportal_db()
+```
+```{r}
+#Find all the available studies and their respective ID 
+all_studies <- available_studies()
+all_studies
+```
+
+```{r}
+#Get the metadata from the study of interest 
+get_study_info("brca_tcga_pan_can_atlas_2018") %>%
+  t()
+```
+
+```{r}
+#sorting/subseting metadata for patients with BRCA1 & BRCA2 mutation status
+md <- get_mutations_by_study("brca_tcga_pan_can_atlas_2018")
+md <- subset(md, hugoGeneSymbol=='BRCA1' | hugoGeneSymbol== "BRCA2") 
+print(md)
+```
+
+
+```{r}
+#Corresponding metadata was obtained from https://www.cbioportal.org/datasets
+#Load expression data
+setwd("/Users/Talylap/Desktop/FInalProject")
+expr <- read.delim("data_mrna_seq_v2_rsem.txt")
+head(expr)
+expr1<- expr %>% distinct(Hugo_Symbol, .keep_all = TRUE)
+dim(expr1)
+head(expr1)
+```
+
+#DESeq2 setup
+```{r}
+#Edit the data tables
+library(tidyverse)
+expr1 <- expr1 [,-2]
+head(expr1)
+expr1 <- column_to_rownames(expr1, "Hugo_Symbol")
+head(expr1)
+md$sampleId <- gsub("-", ".",md$sampleId)
+subset_expr <- expr1[,md$sampleId]
+print(subset_expr)
+print(md)
+```
+
+```{r}
+#remove rows with all zero
+expr_filt <- subset_expr[rowSums(subset_expr)>0,]
+head(expr_filt)
+```
+
+```{r}
+# DESeq need integer count matrix, round to integer
+expr_filt <- round(expr_filt)
+# expr_filt <- tibble::rownames_to_column(expr_filt, "Hugo_Symbol")
+head(expr_filt)
+#subset out duplicate patient samples from the expr matrix so that it aligns with meta data
+expr2 <- subset(expr_filt, select = -c(TCGA.AC.A23H.01.1, TCGA.AN.A046.01.1, TCGA.AN.A046.01.2, TCGA.C8.A12T.01.1, TCGA.EW.A1PE.01.1))
+head(expr2)
+
+
+#colnames(expr2)==rownames(md1)
+```
+
+```{r}
+#reformatting meta data table for DESeq2
+md
+md1<- md %>% distinct(sampleId, .keep_all = TRUE)
+(md1)
+md1 <- column_to_rownames(md1, "sampleId")
+md1
+```
+
+#Run DESeq2
+```{r}
+#initialize DESeq object
+dds <- DESeqDataSetFromMatrix(countData=expr2, 
+                              colData=md1, 
+                              design=~hugoGeneSymbol)
+#run DESeq2
+dds$hugoGeneSymbol <- relevel(dds$hugoGeneSymbol, ref="BRCA1")
+dds <- DESeq(dds)
+
+#store/view results
+res <- results(dds)
+summary(res) 
+
+#Visualize
+plotMA(res)
+```
+```{r}
+head(res)
+```
+```{r}
+#Attach gene symbol to expression data
+#expr_filt$Hugo_Symbol
+```
+
+#Plot top DEGs
+```{r}
+#store results as dataframe
+resdf <- results(dds, tidy = TRUE)
+resdf <- resdf[order(resdf$padj),]
+resdf
+rownames(resdf) <- resdf$row
+head(resdf)
+
+#Volcano
+EnhancedVolcano(resdf,
+    lab = rownames(resdf),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    hlineType = 'solid',
+    hlineWidth = 1.0
+)
+```
+
+
+```{r}
+#Create a table only including gene and log2FoldChange
+library("formattable")
+res.gsea.l2fc <- res[order(res$log2FoldChange, decreasing = T),]
+res.gsea.l2fc <- data.frame(rownames(res.gsea.l2fc),
+                       res.gsea.l2fc$log2FoldChange)
+
+#Rename the columns in the table 
+names(res.gsea.l2fc)[1] <- "SYMBOL"
+names(res.gsea.l2fc)[2] <- "log2FoldChange"
+
+#Wite a .csv file used for downstream processing 
+write.table(res.gsea.l2fc, file = "WOW113.csv", sep = "\t", quote = F, row.names =F , col.names = T)
+
+```
+
+```{r}
+#Load the previously generated csv file
+setwd("/Users/Talylap/Desktop/FInalProject")
+df4 = read.csv("WOW11_Correct.csv", header=T)
+```
+
+```{r}
+#reformat the table/process for GSEA
+res2 <- df4 %>% 
+  dplyr::select(SYMBOL, log2FoldChange) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(SYMBOL) %>% 
+  summarize(log2FoldChange=mean(log2FoldChange))
+res2
+```
+
+```{r}
+#Rank genes
+ranks <- deframe(res2)
+head(ranks, 20)
+```
+
+```{r}
+# Load the pathways into a named list
+pathways.hallmark <- gmtPathways("/Users/Talylap/Desktop/FInalProject/h.all.v2023.2.Hs.symbols.gmt.txt")
+
+# Show the first few pathways, and within those, show only the first few genes. 
+pathways.hallmark %>% 
+  head() %>% 
+  lapply(head)
+```
+
+```{r}
+#Perform GSEA analysis
+fgseaRes <- fgsea(pathways=pathways.hallmark, stats=ranks, nperm=1000)
+
+fgseaResTidy <- fgseaRes %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+# Show in a nice table:
+fgseaResTidy %>% 
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+```
+
+```{r}
+#generate plot
+ggplot(fgseaResTidy, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill=padj<0.05)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Hallmark pathways NES from GSEA") + 
+  theme_minimal()
+```
+
