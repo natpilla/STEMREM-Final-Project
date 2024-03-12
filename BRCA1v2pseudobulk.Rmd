@@ -1,0 +1,182 @@
+---
+title: "BRCA1v2"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+#Perform pseudobulk analysis on BRCA1 vs BRCA2 scRNAseq patient data and run GSEA
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install(version = "3.18")
+library(Seurat)
+library(DESeq2)
+library(biomaRt)
+library(EnhancedVolcano)
+library(ComplexHeatmap)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(tidyverse)
+library(DropletUtils)
+library(SingleR)
+library(celldex)
+library(ggplot2)
+```
+
+```{r}
+#load non-normalized seurat objects..should I do with these already normalized...NO: https://www.bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#standard-workflow
+#should I merge the seurat objects?
+BRCA1_integrated_data <- readRDS("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/BRCA1_integrated_data.rds")
+#downsample both?
+BRCA1_integrated_data <- BRCA1_integrated_data[, sample(colnames(BRCA1_integrated_data), size=1400, replace=F)]
+#look at metadata
+BRCA1_integrated_data[["Group"]] <- "BRCA1"
+BRCA1_integrated_data[[]]
+
+BRCA2_integrated_data <- readRDS("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/BRCA2_integrated_data.rds")
+BRCA2_integrated_data <- BRCA2_integrated_data[, sample(colnames(BRCA2_integrated_data), size=1400, replace=F)]
+#look at metadata
+BRCA2_integrated_data[["Group"]] <- "BRCA2"
+BRCA2_integrated_data[[]]
+
+#merge them
+BRCAmerge <- merge(x = BRCA1_integrated_data, y = BRCA2_integrated_data, add.cell.ids = c("BRCA1", "BRCA2"), project = "BRCAmerge")
+dim(BRCAmerge)
+#https://satijalab.org/seurat/articles/essential_commands.html
+BRCAmerge<- JoinLayers(BRCAmerge, assay = "RNA")
+#BRCA1merge <- as.data.frame(BRCA1merge)
+
+#make a matrix with raw counts to do DESeq2 
+mergeexpr1 <- BRCAmerge[["RNA"]]$counts
+
+#my_data[["RNA"]]@counts <- as.matrix(my_data[["RNA"]]@counts)+1
+mergeexpr1 <- as.data.frame(mergeexpr1)
+head(mergeexpr1)
+dim(mergeexpr1)
+
+#get metadata 
+mergemd1 <- as.data.frame(BRCAmerge[[]])
+dim(mergemd1)
+tail(mergemd1)
+
+#remove rows with all zero
+mergeexpr_filt_1 <- mergeexpr1[rowSums(mergeexpr1)>0,]
+#mergeexpr <- (mergeexpr_filt[["RNA"]]$counts)+1
+dim(mergeexpr_filt_1)
+head(mergeexpr_filt_1)
+mergeexpr_filt_1 <- mergeexpr_filt_1 + 1
+rowSums(mergeexpr_filt_1)
+
+#initialize DESeq object
+dds1 <- DESeqDataSetFromMatrix(countData=mergeexpr_filt_1, 
+                              colData=mergemd1, 
+                              design=~Group)
+#run DESeq2
+dds1$Group <- relevel(dds1$Group, ref="BRCA1")
+dds1 <- DESeq(dds1)
+
+#store/view results
+res1 <- results(dds1)
+summary(res1) 
+
+#Visualize
+plotMA(res1)
+```
+```{r}
+#store results as dataframe
+resdf1 <- results(dds1, tidy = TRUE)
+resdf1 <- resdf[order(resdf1$padj),]
+resdf1
+rownames(resdf1) <- resdf1$row
+head(resdf1)
+
+#Volcano
+EnhancedVolcano(resdf1,
+    lab = rownames(resdf1),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    hlineType = 'solid',
+    hlineWidth = 1.0
+)
+```
+```{r}
+#Create a table only include gene and log2FoldChange
+library("formattable")
+res1.gsea.l2fc <- res[order(res1$log2FoldChange, decreasing = T),]
+res1.gsea.l2fc <- data.frame(rownames(res1.gsea.l2fc),
+                       res1.gsea.l2fc$log2FoldChange)
+
+#Rename the columns in the table 
+names(res1.gsea.l2fc)[1] <- "SYMBOL"
+names(res1.gsea.l2fc)[2] <- "log2FoldChange"
+
+#Wite a .csv file used for downstream processing 
+write.table(res1.gsea.l2fc, file = "BRCA.csv", sep = "\t", quote = F, row.names =F , col.names = T)
+
+```
+```{r}
+#Load the file
+
+df4 = read.csv("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/BRCA.csv", sep = '\t', header=T)
+df4
+```
+```{r}
+res2 <- df4 %>% 
+  dplyr::select(SYMBOL, log2FoldChange) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(SYMBOL) %>% 
+  summarize(log2FoldChange=mean(log2FoldChange))
+res2
+```
+
+```{r}
+#Rank genes
+ranks <- deframe(res2)
+head(ranks, 20)
+```
+
+```{r}
+library(fgsea)
+# Load the pathways into a named list
+pathways.hallmark <- gmtPathways("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/h.all.v2023.2.Hs.symbols.gmt")
+
+# Show the first few pathways, and within those, show only the first few genes. 
+pathways.hallmark %>% 
+  head() %>% 
+  lapply(head)
+```
+
+#Run GSEA
+```{r}
+fgseaRes <- fgsea(pathways=pathways.hallmark, stats=ranks, nperm = 1000)
+```
+
+
+```{r}
+fgseaResTidy <- fgseaRes %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+# Show in a nice table:
+fgseaResTidy %>% 
+  dplyr::select(-leadingEdge, -ES, -nMoreExtreme) %>% 
+  arrange(padj) %>% 
+  DT::datatable()
+```
+
+```{r}
+#generate GSEA plot
+ggplot(fgseaResTidy, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill=padj<0.05)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Hallmark pathways NES from GSEA") + 
+  theme_minimal()
+```
+
