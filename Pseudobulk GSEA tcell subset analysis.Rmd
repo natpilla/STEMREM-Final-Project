@@ -1,0 +1,283 @@
+---
+title: "Pseudobulk GSEA tcell subsets"
+output: html_document
+date: "2024-03-12"
+---
+
+#Performs DESeq2 and GSEA analysis on subsetted Tcell groups from scRNA seq patients integrated based on either BRCA1, BRCA2, or normal patient status and compares groups.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+setwd("/Users/nataliepilla/Desktop/BRCA\ project")
+library(Seurat)
+library(DESeq2)
+library(biomaRt)
+library(EnhancedVolcano)
+library(ComplexHeatmap)
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(tidyverse)
+library(SingleR)
+library(celldex)
+library(ggplot2)
+library(fgsea)
+library(formattable)
+```
+
+```{r}
+#load in integrated T cell subset RDS files
+brca1 <- readRDS("BRCA1_integrated_tcelldata.rds")
+brca2 <- readRDS("BRCA2_integrated_tcelldata.rds")
+norm <- readRDS("normal_tcelldata.rds")
+
+#downsample normal data???
+
+#add metadata
+brca1[["Group"]] <- "BRCA1"
+brca2[["Group"]] <- "BRCA2"
+norm[["Group"]] <- "normal"
+
+#create merged objects for each pairing to compare
+brca1_2merge <- merge(x = brca1, y = brca2, add.cell.ids = c("BRCA1", "BRCA2"), project = "brca1_2merge")
+brca1_2merge<- JoinLayers(brca1_2merge, assay = "RNA")
+
+brca1_norm_merge <- merge(x = brca1, y = norm, add.cell.ids = c("BRCA1", "normal"), project = "brca1_norm_merge")
+brca1_norm_merge<- JoinLayers(brca1_norm_merge, assay = "RNA")
+
+brca2_norm_merge <- merge(x = brca2, y = norm, add.cell.ids = c("BRCA2", "normal"), project = "brca2_norm_merge")
+brca2_norm_merge<- JoinLayers(brca2_norm_merge, assay = "RNA")
+
+#make matrices with raw counts to do DESeq2
+
+mergeexpr1_2 <- brca1_2merge[["RNA"]]$counts
+mergeexpr1_norm <- brca1_norm_merge[["RNA"]]$counts
+mergeexpr2_norm <- brca2_norm_merge[["RNA"]]$counts
+
+mergeexpr1_2 <- as.data.frame(mergeexpr1_2)
+mergeexpr1_norm <- as.data.frame(mergeexpr1_norm)
+mergeexpr2_norm <- as.data.frame(mergeexpr2_norm)
+
+#get meta data
+mergemd1_2 <- as.data.frame(brca1_2merge[[]])
+mergemd1_norm <- as.data.frame(brca1_norm_merge[[]])
+mergemd2_norm <- as.data.frame(brca2_norm_merge[[]])
+
+#remove rows with all zero
+mergeexpr1_2 <- mergeexpr1_2[rowSums(mergeexpr1_2)>0,]
+mergeexpr1_norm <- mergeexpr1_norm[rowSums(mergeexpr1_norm)>0,]
+mergeexpr2_norm <- mergeexpr2_norm[rowSums(mergeexpr2_norm)>0,]
+
+#add 1 to all counts
+mergeexpr1_2 <- mergeexpr1_2 + 1
+mergeexpr1_norm <- mergeexpr1_norm + 1
+mergeexpr2_norm <- mergeexpr2_norm + 1
+
+#initialize DESeq objects
+dds1_2 <- DESeqDataSetFromMatrix(countData=mergeexpr1_2, 
+                              colData=mergemd1_2, 
+                              design=~Group)
+dds1_norm <- DESeqDataSetFromMatrix(countData=mergeexpr1_norm, 
+                              colData=mergemd1_norm, 
+                              design=~Group)
+dds2_norm <- DESeqDataSetFromMatrix(countData=mergeexpr2_norm, 
+                              colData=mergemd2_norm, 
+                              design=~Group)
+
+#run DESeq2
+
+dds1_2$Group <- relevel(dds1_2$Group, ref="BRCA1")
+dds1_2 <- DESeq(dds1_2)
+
+dds1_norm$Group <- relevel(dds1_norm$Group, ref="normal")
+dds1_norm <- DESeq(dds1_norm)
+
+dds2_norm$Group <- relevel(dds2_norm$Group, ref="normal")
+dds2_norm <- DESeq(dds2_norm)
+
+#store/view results
+res1_2 <- results(dds1_2)
+summary(res1_2)
+
+res1_norm <- results(dds1_norm)
+summary(res1_norm)
+
+res2_norm <- results(dds2_norm)
+summary(res2_norm)
+
+#Visualize
+plotMA(res1_2)
+plotMA(res1_norm)
+plotMA(res2_norm)
+
+#store results as dataframe
+resdf1_2 <- results(dds1_2, tidy = TRUE)
+resdf1_2 <- resdf1_2[order(resdf1_2$padj),]
+resdf1_2
+rownames(resdf1_2) <- resdf1_2$row
+head(resdf1_2)
+
+resdf1_norm <- results(dds1_norm, tidy = TRUE)
+resdf1_norm <- resdf1_norm[order(resdf1_norm$padj),]
+resdf1_norm
+rownames(resdf1_norm) <- resdf1_norm$row
+head(resdf1_norm)
+
+resdf2_norm <- results(dds2_norm, tidy = TRUE)
+resdf2_norm <- resdf2_norm[order(resdf2_norm$padj),]
+resdf2_norm
+rownames(resdf2_norm) <- resdf2_norm$row
+head(resdf2_norm)
+
+#Volcano
+EnhancedVolcano(resdf1_2,
+    lab = rownames(resdf1_2),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    hlineType = 'solid',
+    hlineWidth = 1.0
+)
+
+EnhancedVolcano(resdf1_norm,
+    lab = rownames(resdf1_norm),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    hlineType = 'solid',
+    hlineWidth = 1.0
+)
+
+EnhancedVolcano(resdf2_norm,
+    lab = rownames(resdf2_norm),
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 0.05,
+    hlineType = 'solid',
+    hlineWidth = 1.0
+)
+
+#Create a table only include gene and log2FoldChange
+res1_2.gsea.l2fc <- res1_2[order(res1_2$log2FoldChange, decreasing = T),]
+res1_2.gsea.l2fc <- data.frame(rownames(res1_2.gsea.l2fc),
+                       res1_2.gsea.l2fc$log2FoldChange)
+
+res1_norm.gsea.l2fc <- res1_norm[order(res1_norm$log2FoldChange, decreasing = T),]
+res1_norm.gsea.l2fc <- data.frame(rownames(res1_norm.gsea.l2fc),
+                       res1_norm.gsea.l2fc$log2FoldChange)
+
+res2_norm.gsea.l2fc <- res2_norm[order(res2_norm$log2FoldChange, decreasing = T),]
+res2_norm.gsea.l2fc <- data.frame(rownames(res2_norm.gsea.l2fc),
+                       res2_norm.gsea.l2fc$log2FoldChange)
+
+#Rename the columns in the table 
+names(res1_2.gsea.l2fc)[1] <- "SYMBOL"
+names(res1_2.gsea.l2fc)[2] <- "log2FoldChange"
+
+names(res1_norm.gsea.l2fc)[1] <- "SYMBOL"
+names(res1_norm.gsea.l2fc)[2] <- "log2FoldChange"
+
+names(res2_norm.gsea.l2fc)[1] <- "SYMBOL"
+names(res2_norm.gsea.l2fc)[2] <- "log2FoldChange"
+
+#Write a .csv file used for downstream processing 
+write.table(res1_2.gsea.l2fc, file = "tcell_res1_2.csv", sep = "\t", quote = F, row.names =F , col.names = T)
+
+write.table(res1_norm.gsea.l2fc, file = "tcell_res1_norm.csv", sep = "\t", quote = F, row.names =F , col.names = T)
+
+write.table(res2_norm.gsea.l2fc, file = "tcell_res2_norm.csv", sep = "\t", quote = F, row.names =F , col.names = T)
+
+#Load the files
+tcell_res1_2 = read.csv("tcell_res1_2.csv", sep = '\t', header=T)
+tcell_res1_2
+
+tcell_res1_norm = read.csv("tcell_res1_norm.csv", sep = '\t', header=T)
+tcell_res1_norm
+
+tcell_res2_norm = read.csv("tcell_res2_norm.csv", sep = '\t', header=T)
+tcell_res2_norm
+
+final_res1_2 <- tcell_res1_2 %>% 
+  dplyr::select(SYMBOL, log2FoldChange) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(SYMBOL) %>% 
+  summarize(log2FoldChange=mean(log2FoldChange))
+final_res1_2
+
+final_res1_norm <- tcell_res1_norm %>% 
+  dplyr::select(SYMBOL, log2FoldChange) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(SYMBOL) %>% 
+  summarize(log2FoldChange=mean(log2FoldChange))
+final_res1_norm
+
+final_res2_norm <- tcell_res2_norm %>% 
+  dplyr::select(SYMBOL, log2FoldChange) %>% 
+  na.omit() %>% 
+  distinct() %>% 
+  group_by(SYMBOL) %>% 
+  summarize(log2FoldChange=mean(log2FoldChange))
+final_res2_norm
+
+#Rank genes
+ranks1_2 <- deframe(final_res1_2)
+head(ranks1_2, 20)
+
+ranks1_norm <- deframe(final_res1_norm)
+head(ranks1_norm, 20)
+
+ranks2_norm <- deframe(final_res2_norm)
+head(ranks2_norm, 20)
+
+# Load the pathways into a named list
+pathways.hallmark <- gmtPathways("h.all.v2023.2.Hs.symbols.gmt")
+
+# Show the first few pathways, and within those, show only the first few genes. 
+pathways.hallmark %>% 
+  head() %>% 
+  lapply(head)
+
+#run GSEA
+fgseaRes1_2 <- fgsea(pathways=pathways.hallmark, stats=ranks1_2)
+
+fgseaRes1_norm <- fgsea(pathways=pathways.hallmark, stats=ranks1_norm)
+
+fgseaRes2_norm <- fgsea(pathways=pathways.hallmark, stats=ranks2_norm)
+
+fgseaRes1_2Tidy <- fgseaRes1_2 %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+fgseaRes1_normTidy <- fgseaRes1_norm %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+fgseaRes2_normTidy <- fgseaRes2_norm %>%
+  as_tibble() %>%
+  arrange(desc(NES))
+
+#GSEA Plots
+ggplot(fgseaRes1_2Tidy, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill=padj<0.05)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Hallmark pathways NES from GSEA") + 
+  theme_minimal()
+
+ggplot(fgseaRes1_normTidy, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill=padj<0.05)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Hallmark pathways NES from GSEA") + 
+  theme_minimal()
+
+ggplot(fgseaRes2_normTidy, aes(reorder(pathway, NES), NES)) +
+  geom_col(aes(fill=padj<0.05)) +
+  coord_flip() +
+  labs(x="Pathway", y="Normalized Enrichment Score",
+       title="Hallmark pathways NES from GSEA") + 
+  theme_minimal()
+
+```
+
