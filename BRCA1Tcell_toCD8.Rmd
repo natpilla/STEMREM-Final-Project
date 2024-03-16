@@ -1,0 +1,219 @@
+---
+title: "BRCA1 Tcell cluster subset to only CD8 T cells"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+#Uses BRCA1 integrated T cell subset data to subset the populations of T cells and then further focuses just on CD8+ Tcells and examines the different clusters present within that subset. Generates UMAPs for the Tcell clusters and the CD8+ Tcell clusters
+
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install(version = "3.18")
+library(Seurat)
+library(DESeq2)
+library(biomaRt)
+library(EnhancedVolcano)
+library(ComplexHeatmap)
+
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(tidyverse)
+
+library(DropletUtils)
+library(SingleR)
+library(celldex)
+```
+
+```{r}
+#load in BRCA1 integrated tcell data
+BRCA1_integrated_data <- readRDS('/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/BRCA1_integrated_tcelldata.rds')
+# identify variable genes for BRCA1 T cells
+BRCA1_integrated_data <- FindVariableFeatures(BRCA1_integrated_data)
+
+# Z-score scale.
+BRCA1tcells.all.genes <- rownames(BRCA1_integrated_data)
+BRCA1_integrated_data <- ScaleData(BRCA1_integrated_data, features = BRCA1tcells.all.genes)
+
+# PCA, default subsets to highly variable features
+BRCA1_integrated_data<- RunPCA(BRCA1_integrated_data)
+
+ElbowPlot(BRCA1_integrated_data, ndims = 50)
+
+# computing the neighborhood graph and find clusters
+BRCA1_integrated_data <- FindNeighbors(BRCA1_integrated_data, dims = 1:30)
+BRCA1_integrated_data <- FindClusters(BRCA1_integrated_data, resolution = 0.25)
+
+# run UMAP
+BRCA1_integrated_data <- RunUMAP(BRCA1_integrated_data, dims = 1:30)
+#Make TSNE instead
+#tsne.immuneBRCA2 <- RunTSNE(immune.BRCA2,dims.use = 1:50, reduction.use = "pca", dim_embed = 2)
+
+# plot UMAP and TSNE
+DimPlot(BRCA1_integrated_data, reduction = "umap")
+#DimPlot(tsne.immuneBRCA2, reduction = 'tsne')
+
+#THERE ARE 7 CLUSTERS
+
+#Find DE features (biomarkers for all clusters) in integrated dataset for BRCA1
+tcell.BRCA1.markers <- FindAllMarkers(BRCA1_integrated_data, only.pos = TRUE)
+tcell.BRCA1.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+tcell.BRCA1_heatmap <- DoHeatmap(BRCA1_integrated_data, features = top10$gene) + NoLegend()  + theme(axis.text.y = element_text(size = 7))
+tcell.BRCA1_heatmap
+
+#clusters 0,1,2 are CD8 Tcells
+t_cell_panel <-c('CD3D')
+cd8tcell <- c('CD8B','CD8A')
+cd4tcell <- c('CD4')
+th1 <- c('CD4','IFNG', 'STAT1')
+th2 <- c('CD4','GATA3', 'STAT6')
+th17 <- c('CD4','RORC', 'IL17A')
+nkcells <- c('NCR1')
+naive_tcells <- c('ZNF205')
+progenitor <- c('PDCD1', 'CXCR5', 'TCF7', 'SLAMF6', 'CD69')
+transitory <- c('PDCD1', 'CXCR5' )
+exhaustion <- c('PDCD1', 'HAVCR2','CD69')
+#make T cell panel
+#T cells - all should be positive - YES
+VlnPlot(BRCA1_integrated_data, features = t_cell_panel)
+#CD8 0,1,2
+VlnPlot(BRCA1_integrated_data, features = cd8tcell_cytotoxic)
+#CD4 6 
+VlnPlot(BRCA1_integrated_data, features = cd4tcell)
+#NK cells, not there
+VlnPlot(BRCA1_integrated_data, features = nkcells)
+
+VlnPlot(BRCA1_integrated_data, features = progenitor)
+VlnPlot(BRCA1_integrated_data, features = transitory)
+VlnPlot(BRCA1_integrated_data, features = exhaustion)
+
+#make cluster ids
+BRCA1.CD8.new.cluster.ids <- c("CD8_1", 'CD8_2', "CD8_3", '3', '4',
+                     '5', '6'
+                     )
+names(BRCA1.CD8.new.cluster.ids) <- levels(BRCA1_integrated_data)
+levels(BRCA1_integrated_data)
+BRCA1_CD8_integrated_data <- RenameIdents(BRCA1_integrated_data, BRCA1.CD8.new.cluster.ids)
+
+#look at all different clusters
+levels(BRCA1_CD8_integrated_data )
+#subset based on cd4+ t cells
+BRCA1_CD8_integrated_data <- subset(BRCA1_CD8_integrated_data , idents = c("CD8_1","CD8_2", "CD8_3"))
+levels(BRCA1_CD8_integrated_data)
+
+```
+
+```{r}
+#Subset CD8 Tcell cluster
+
+# identify variable genes for BRCA1 T cells
+BRCA1_CD8_integrated_data <- FindVariableFeatures(BRCA1_CD8_integrated_data)
+
+# Z-score scale.
+BRCA1.CD8.tcells.all.genes <- rownames(BRCA1_CD8_integrated_data)
+BRCA1_CD8_integrated_data <- ScaleData(BRCA1_CD8_integrated_data, features = BRCA1.CD8.tcells.all.genes)
+
+# PCA, default subsets to highly variable features
+BRCA1_CD8_integrated_data<- RunPCA(BRCA1_CD8_integrated_data)
+
+ElbowPlot(BRCA1_CD8_integrated_data, ndims = 50)
+
+# computing the neighborhood graph and find clusters
+BRCA1_CD8_integrated_data<- FindNeighbors(BRCA1_CD8_integrated_data, dims = 1:30)
+BRCA1_CD8_integrated_data<- FindClusters(BRCA1_CD8_integrated_data, resolution = 0.1)
+
+# run UMAP
+BRCA1_CD8_integrated_data <- RunUMAP(BRCA1_CD8_integrated_data, dims = 1:30)
+#Make TSNE instead
+#tsne.immuneBRCA2 <- RunTSNE(immune.BRCA2,dims.use = 1:50, reduction.use = "pca", dim_embed = 2)
+
+# plot UMAP and TSNE
+DimPlot(BRCA1_CD8_integrated_data, reduction = "umap")
+#DimPlot(tsne.immuneBRCA2, reduction = 'tsne')
+
+#THERE ARE 3 CLUSTERS
+
+#Find DE features (biomarkers for all clusters) in integrated dataset for BRCA1
+tcell.CD8.BRCA1.markers <- FindAllMarkers(BRCA1_CD8_integrated_data, only.pos = TRUE)
+tcell.CD8.BRCA1.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+tcell.CD8.BRCA1_heatmap <- DoHeatmap(BRCA1_CD8_integrated_data, features = top10$gene) + NoLegend()  + theme(axis.text.y = element_text(size = 7))
+tcell.CD8.BRCA1_heatmap
+
+#clusters 0,1,2 are CD8 Tcells
+t_cell_panel <-c('CD3D')
+cd8tcell <- c('CD8B','CD8A')
+cd4tcell <- c('CD4')
+th1 <- c('CD4','IFNG', 'STAT1')
+th2 <- c('CD4','GATA3', 'STAT6')
+th17 <- c('CD4','RORC', 'IL17A')
+nkcells <- c('NCR1')
+naive_tcells <- c('CD27')
+progenitor <- c('PDCD1', 'TCF7', 'SLAMF6', 'CD69', 'CTLA4', 'TOX')
+transitory <- c('PDCD1')
+exhaustion <- c('PDCD1', 'HAVCR2','CD69', 'IFNG', 'TBX21')
+ad_tissue_res <- c('CD69','ITGAE')
+hom_tissue_res <- c('CD69','KLRG1', 'IL7R')
+#response_tissue_res <- c('CD69')
+exit_tissue_res <- c('CD69','SELL', 'CD44')
+
+random <- c('TIGIT', 'CTLA4', 'CXCR3')
+#make T cell panel
+#T cells - all should be positive - YES
+VlnPlot(BRCA1_CD8_integrated_data, features = t_cell_panel)
+#CD8 0,1,2
+VlnPlot(BRCA1_CD8_integrated_data, features = cd8tcell_cytotoxic)
+#CD4 6 
+VlnPlot(BRCA1_CD8_integrated_data, features = cd4tcell)
+#NK cells, not there
+#VlnPlot(BRCA1_CD8_integrated_data, features = nkcells)
+
+VlnPlot(BRCA1_CD8_integrated_data, features = naive_tcells)
+VlnPlot(BRCA1_CD8_integrated_data, features = ad_tissue_res)
+VlnPlot(BRCA1_CD8_integrated_data, features = hom_tissue_res)
+VlnPlot(BRCA1_CD8_integrated_data, features = response_tissue_res)
+VlnPlot(BRCA1_CD8_integrated_data, features = exit_tissue_res)
+VlnPlot(BRCA1_CD8_integrated_data, features = progenitor)
+VlnPlot(BRCA1_CD8_integrated_data, features = transitory)
+VlnPlot(BRCA1_CD8_integrated_data, features = exhaustion)
+VlnPlot(BRCA1_CD8_integrated_data, features = random )
+
+#make cluster ids
+BRCA1.CD8.new.cluster.ids <- c("tissue resident CD8 T cell", 'effector T cell', "terminally differentiated T cell"
+                    )
+names(BRCA1.CD8.new.cluster.ids) <- levels(BRCA1_CD8_integrated_data)
+levels(BRCA1_CD8_integrated_data)
+BRCA1_CD8_integrated_data <- RenameIdents(BRCA1_CD8_integrated_data, BRCA1.CD8.new.cluster.ids)
+# plot UMAP and TSNE
+DimPlot(BRCA1_CD8_integrated_data, reduction = "umap")
+
+
+#look at all different clusters
+levels(BRCA1_CD8_integrated_data )
+
+BRCA1_CD8_integrated_data <- subset(BRCA1_CD8_integrated_data , idents = c("CD8_1","CD8_2", "CD8_3"))
+levels(BRCA1_CD8_integrated_data)]
+
+#CLUSTER 0 is tissue resident CD8 T cell (CD69+, CD103+, IL7R+)
+#CLUSTER 1is effector CD44+ CD62L- T cell tissue resident (CD69+, CD27+)
+#CLUSTER 2 is terminally differentiated CD8T cells (KLRG1+, ILR7-)
+
+
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
