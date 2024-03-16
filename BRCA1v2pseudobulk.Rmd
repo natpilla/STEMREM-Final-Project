@@ -28,8 +28,7 @@ library(ggplot2)
 ```
 
 ```{r}
-#load non-normalized seurat objects..should I do with these already normalized...NO: https://www.bioconductor.org/packages/release/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#standard-workflow
-#should I merge the seurat objects?
+#load seurat objects 
 BRCA1_integrated_data <- readRDS("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/BRCA1_integrated_data.rds")
 #downsample both?
 BRCA1_integrated_data <- BRCA1_integrated_data[, sample(colnames(BRCA1_integrated_data), size=1400, replace=F)]
