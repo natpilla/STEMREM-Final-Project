@@ -4,7 +4,7 @@ output: html_document
 date: "2024-02-20"
 ---
 
-#Integrates BRCA2 raw patient sc-RNA seq data
+#Integrates BRCA2 sc-RNA seq patient samples
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
