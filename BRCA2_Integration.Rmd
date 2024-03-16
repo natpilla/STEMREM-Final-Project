@@ -1,0 +1,87 @@
+---
+title: "brca2 integration"
+output: html_document
+date: "2024-02-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(hdf5r)
+library(Seurat)
+library(dplyr)
+library(SingleR)
+library(ComplexHeatmap)
+library(DESeq2)
+library(EnhancedVolcano)
+library(biomaRt)
+library(ggplot2)
+library(tibble)
+library(tidyverse)
+library(celldex)
+library(SingleCellExperiment)
+setwd("/Users/nataliepilla/Downloads/Processed_Data_Files")
+```
+
+## R Markdown
+
+```{r}
+sample1 <- readRDS("EH1906_01B_processed.rds")
+sample2 <- readRDS("UH1908_22B_processed.rds")
+sample3 <- readRDS("UHB1907_02_processed.rds")
+sample4 <- readRDS("UHB2009_18B_processed.rds")
+
+# Downsample to reduce comp time
+#set.seed(0)
+#sample1 <- sample1[, sample(colnames(sample1), size=1400, replace=F)]
+
+#set.seed(0)
+#sample2 <- sample2[, sample(colnames(sample2), size=1400, replace=F)]
+#set.seed(0)
+#sample3 <- sample3[, sample(colnames(sample3), size=1400, replace=F)]
+#set.seed(0)
+#sample4 <- sample4[, sample(colnames(sample4), size=1400, replace=F)]
+
+ncol(sample1)
+ncol(sample2)
+ncol(sample3)
+ncol(sample4)
+```
+
+```{r}
+# To setup, store objects in list, find common variable features, find cell anchors
+objlist <- list(sample1, sample2, sample3, sample4)
+features <- SelectIntegrationFeatures(object.list = objlist)
+anchors <- FindIntegrationAnchors(object.list = objlist, anchor.features = features)
+anchors
+```
+
+
+```{r}
+brca2_int <- IntegrateData(anchorset = anchors)
+DefaultAssay(brca2_int) <- "integrated"
+```
+
+
+```{r}
+brca2_int <- ScaleData(brca2_int, verbose = FALSE)
+brca2_int <- RunPCA(brca2_int, npcs = 50, verbose = FALSE)
+ElbowPlot(sample2, ndims = 50)
+brca2_int <- RunUMAP(brca2_int, dims = 1:30, verbose = FALSE)
+brca2_int <- FindNeighbors(brca2_int, dims = 1:30, verbose = FALSE)
+brca2_int <- FindClusters(brca2_int, resolution = 0.2, verbose = FALSE)
+DimPlot(brca2_int, reduction = "umap", label = TRUE, repel = TRUE)
+#DimPlot(brca2_int, reduction = "umap", group.by="version")
+```
+```{r}
+BRCA2.markers = FindAllMarkers(brca2_int, only.pos = TRUE)
+BRCA2.markers %>%
+    group_by(cluster) %>%
+    dplyr::filter(avg_log2FC > 1) %>%
+    slice_head(n = 10) %>%
+    ungroup() -> top10
+DoHeatmap(brca2_int, features = top10$gene) + NoLegend() + theme(axis.text.y = element_text(size = 2.5))
+  
+```
+```{r}
+saveRDS(brca2_int, file = "/Users/nataliepilla/Downloads/BRCA2_integrated_data.rds")
+```
