@@ -3,12 +3,10 @@ title: "BRCA1 Tcell cluster subset to only CD8 T cells"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
-#Uses BRCA1 integrated T cell subset data to subset the populations of T cells and then further focuses just on CD8+ Tcells and examines the different clusters present within that subset. Generates UMAPs for the Tcell clusters and the CD8+ Tcell clusters
 
 #Uses BRCA1 integrated T cell subset data to subset the populations of T cells and then further focuses just on CD8+ Tcells and examines the different clusters present within that subset. Generates UMAPs for the Tcell clusters and the CD8+ Tcell clusters
+
+
 
 ```{r}
 if (!require("BiocManager", quietly = TRUE))
