@@ -138,6 +138,9 @@ BRCA1_CD8_integrated_data <- RunUMAP(BRCA1_CD8_integrated_data, dims = 1:30)
 DimPlot(BRCA1_CD8_integrated_data, reduction = "umap")
 #DimPlot(tsne.immuneBRCA2, reduction = 'tsne')
 
+#check samples are well integrated
+DimPlot(BRCA2_integrated_data, group.by = "orig.ident", reduction = "umap")
+
 #THERE ARE 3 CLUSTERS
 
 #Find DE features (biomarkers for all clusters) in integrated dataset for BRCA1
