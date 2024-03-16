@@ -1,0 +1,954 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+#identifies the T cell cluster in each patient sc-RNA seq data set and then intergrates these clusters based on BRCA mutation type.
+
+```{r}
+
+library(Seurat)
+library(DESeq2)
+library(biomaRt)
+library(EnhancedVolcano)
+library(ComplexHeatmap)
+
+library(dplyr)
+library(tibble)
+library(ggplot2)
+library(tidyverse)
+
+library(SingleR)
+library(celldex)
+library(viridisLite)
+```
+```{r}
+#Load files from BRCA dataset
+
+#read count matrices from 10X cellranger hdf5 files
+
+brca_334 <- Read10X_h5("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/GSE223886_RAW/GSM6998334_EH1906-01B_filtered_feature_bc_matrix.h5")
+
+brca_335 <- Read10X_h5("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/GSE223886_RAW/GSM6998335_EHB2002-07_HN_filtered_feature_bc_matrix.h5")
+
+brca_336 <- Read10X_h5("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/GSE223886_RAW/GSM6998336_EHB2002-07_PN_filtered_feature_bc_matrix.h5")
+
+brca_337 <- Read10X_h5("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/GSE223886_RAW/GSM6998337_UH1908-22B_filtered_feature_bc_matrix.h5")
+
+brca_338 <- Read10X_h5("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/GSE223886_RAW/GSM6998338_UH2012-19B_filtered_feature_bc_matrix.h5")
+
+brca_339 <- Read10X_h5("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/GSE223886_RAW/GSM6998339_UH2012-19D_filtered_feature_bc_matrix.h5")
+
+brca_340 <- Read10X_h5("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/GSE223886_RAW/GSM6998340_UHB1907-02_filtered_feature_bc_matrix.h5")
+
+brca_341 <- Read10X_h5("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/GSE223886_RAW/GSM6998341_UHB2007-14B_filtered_feature_bc_matrix.h5")
+
+brca_342 <- Read10X_h5("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/GSE223886_RAW/GSM6998342_UHB2009-18B_filtered_feature_bc_matrix.h5")
+
+brca_343 <- Read10X_h5("/Users/vicgonzalez/Desktop/Stanford/year_one/Winter_quarter_2024/STEMREM205/project/GSE223886_RAW/GSM6998343_UHB2010-26_filtered_feature_bc_matrix.h5")
+
+
+# Initialize the Seurat objects with the raw (non-normalized data).
+brca_334obj <- CreateSeuratObject(counts = brca_334, project = "brca334", min.cells = 3, min.features = 200)
+
+brca_335obj <- CreateSeuratObject(counts = brca_335, project = "brca335", min.cells = 3, min.features = 200)
+
+brca_336obj <- CreateSeuratObject(counts = brca_336, project = "brca336", min.cells = 3, min.features = 200)
+
+brca_337obj <- CreateSeuratObject(counts = brca_337, project = "brca337", min.cells = 3, min.features = 200)
+
+brca_338obj <- CreateSeuratObject(counts = brca_338, project = "brca338", min.cells = 3, min.features = 200)
+
+brca_339obj <- CreateSeuratObject(counts = brca_339, project = "brca339", min.cells = 3, min.features = 200)
+
+brca_340obj <- CreateSeuratObject(counts = brca_340, project = "brca340", min.cells = 3, min.features = 200)
+
+brca_341obj <- CreateSeuratObject(counts = brca_341, project = "brca341", min.cells = 3, min.features = 200)
+
+brca_342obj <- CreateSeuratObject(counts = brca_342, project = "brca342", min.cells = 3, min.features = 200)
+
+brca_343obj <- CreateSeuratObject(counts = brca_343, project = "brca343", min.cells = 3, min.features = 200)
+
+```
+
+```{r}
+#Begin QC for each patient
+
+#determine unique number of genes detected in each cell (n_feature = number of genes detected per cell) 
+#determine total number of molecules detected in each cell (n_count = UMI) ...UMI counts should generally be above 500
+  #Good cells will generally exhibit both higher number of genes per cell and higher numbers of UMIs...and low % mitochondrial reads
+#determine % of reads that map to the mitochondrial genome
+
+#Questions: how many cells do I expect per sample? What is the appropriate cutoff for % of reads that map to mitochondria? Should I filter with the same criteria for each sample?
+
+#Patient 334
+brca_334obj[["percent.mt"]] <- PercentageFeatureSet(brca_334obj, pattern = "^MT-")
+# Add number of genes per UMI for each cell to metadata
+brca_334obj$log10GenesPerUMI <- log10(brca_334obj$nFeature_RNA) / log10(brca_334obj$nCount_RNA)
+head(brca_334obj@meta.data, 5)
+# Visualize QC metrics as a violin plot
+VlnPlot(brca_334obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+#Visualize feature x feature relationships to subset the data
+plot1_334 <- FeatureScatter(brca_334obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_334 <- FeatureScatter(brca_334obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_334 + plot2_334
+#Determine number of cells/sample
+nrow(brca_334obj) 
+#Subset data based on trends throughout patients: Trying nFeature_RNA >200,<8000; percent.mt <10
+brca_334obj <- subset(brca_334obj, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+
+
+#Patient 335
+brca_335obj[["percent.mt"]] <- PercentageFeatureSet(brca_335obj, pattern = "^MT-")
+# Add number of genes per UMI for each cell to metadata
+brca_335obj$log10GenesPerUMI <- log10(brca_335obj$nFeature_RNA) / log10(brca_335obj$nCount_RNA)
+head(brca_335obj@meta.data, 5)
+# Visualize QC metrics as a violin plot
+VlnPlot(brca_335obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+#Visualize feature x feature relationships to subset the data
+plot1_335 <- FeatureScatter(brca_335obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_335 <- FeatureScatter(brca_335obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_335 + plot2_335
+#Determine number of cells/sample
+nrow(brca_335obj) 
+#Subset data based on trends throughout patients: Trying nFeature_RNA >200,<8000; percent.mt <10
+brca_335obj <- subset(brca_335obj, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+
+
+#Patient 336
+brca_336obj[["percent.mt"]] <- PercentageFeatureSet(brca_336obj, pattern = "^MT-")
+# Add number of genes per UMI for each cell to metadata
+brca_336obj$log10GenesPerUMI <- log10(brca_336obj$nFeature_RNA) / log10(brca_336obj$nCount_RNA)
+head(brca_336obj@meta.data, 5)
+# Visualize QC metrics as a violin plot
+VlnPlot(brca_336obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+#Visualize feature x feature relationships to subset the data
+plot1_336 <- FeatureScatter(brca_336obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_336 <- FeatureScatter(brca_336obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_336 + plot2_336
+#Determine number of cells/sample
+nrow(brca_336obj) 
+#Subset data based on trends throughout patients: Trying nFeature_RNA >200,<8000; percent.mt <10
+brca_336obj <- subset(brca_336obj, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+
+
+#Patient 337
+brca_337obj[["percent.mt"]] <- PercentageFeatureSet(brca_337obj, pattern = "^MT-")
+# Add number of genes per UMI for each cell to metadata
+brca_337obj$log10GenesPerUMI <- log10(brca_337obj$nFeature_RNA) / log10(brca_337obj$nCount_RNA)
+head(brca_337obj@meta.data, 5)
+# Visualize QC metrics as a violin plot
+VlnPlot(brca_337obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+#Visualize feature x feature relationships to subset the data
+plot1_337 <- FeatureScatter(brca_337obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_337 <- FeatureScatter(brca_337obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_337 + plot2_337
+#Determine number of cells/sample
+nrow(brca_337obj) 
+#Subset data based on trends throughout patients: Trying nFeature_RNA >200,<8000; percent.mt <10
+brca_337obj <- subset(brca_337obj, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+
+
+#Patient 338
+brca_338obj[["percent.mt"]] <- PercentageFeatureSet(brca_338obj, pattern = "^MT-")
+# Add number of genes per UMI for each cell to metadata
+brca_338obj$log10GenesPerUMI <- log10(brca_338obj$nFeature_RNA) / log10(brca_338obj$nCount_RNA)
+head(brca_338obj@meta.data, 5)
+# Visualize QC metrics as a violin plot
+VlnPlot(brca_338obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+#Visualize feature x feature relationships to subset the data
+plot1_338 <- FeatureScatter(brca_338obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_338 <- FeatureScatter(brca_338obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_338 + plot2_338
+#Determine number of cells/sample
+nrow(brca_338obj) 
+#Subset data based on trends throughout patients: Trying nFeature_RNA >200,<8000; percent.mt <10
+brca_338obj <- subset(brca_338obj, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+
+
+#Patient 339
+brca_339obj[["percent.mt"]] <- PercentageFeatureSet(brca_339obj, pattern = "^MT-")
+# Add number of genes per UMI for each cell to metadata
+brca_339obj$log10GenesPerUMI <- log10(brca_339obj$nFeature_RNA) / log10(brca_339obj$nCount_RNA)
+head(brca_339obj@meta.data, 5)
+# Visualize QC metrics as a violin plot
+VlnPlot(brca_339obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+plot1_339 <- FeatureScatter(brca_339obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_339 <- FeatureScatter(brca_339obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_339 + plot2_339
+#Determine number of cells/sample
+nrow(brca_339obj) 
+#Subset data based on trends throughout patients: Trying nFeature_RNA >200,<8000; percent.mt <10
+brca_339obj <- subset(brca_339obj, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+
+
+#Patient 340
+brca_340obj[["percent.mt"]] <- PercentageFeatureSet(brca_340obj, pattern = "^MT-")
+# Add number of genes per UMI for each cell to metadata
+brca_340obj$log10GenesPerUMI <- log10(brca_340obj$nFeature_RNA) / log10(brca_340obj$nCount_RNA)
+head(brca_340obj@meta.data, 5)
+# Visualize QC metrics as a violin plot
+VlnPlot(brca_340obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+plot1_340 <- FeatureScatter(brca_340obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_340 <- FeatureScatter(brca_340obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_340 + plot2_340
+#Determine number of cells/sample
+nrow(brca_340obj) 
+#Subset data based on trends throughout patients: Trying nFeature_RNA >200,<8000; percent.mt <10
+brca_340obj <- subset(brca_340obj, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+
+
+#Patient 341
+brca_341obj[["percent.mt"]] <- PercentageFeatureSet(brca_341obj, pattern = "^MT-")
+# Add number of genes per UMI for each cell to metadata
+brca_341obj$log10GenesPerUMI <- log10(brca_341obj$nFeature_RNA) / log10(brca_341obj$nCount_RNA)
+head(brca_341obj@meta.data, 5)
+# Visualize QC metrics as a violin plot
+VlnPlot(brca_341obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+plot1_341 <- FeatureScatter(brca_341obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_341 <- FeatureScatter(brca_341obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_341 + plot2_341
+#Determine number of cells/sample
+nrow(brca_341obj) 
+#Subset data based on trends throughout patients: Trying nFeature_RNA >200,<8000; percent.mt <10
+brca_341obj <- subset(brca_341obj, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+
+
+#Patient 342
+brca_342obj[["percent.mt"]] <- PercentageFeatureSet(brca_342obj, pattern = "^MT-")
+# Add number of genes per UMI for each cell to metadata
+brca_342obj$log10GenesPerUMI <- log10(brca_342obj$nFeature_RNA) / log10(brca_342obj$nCount_RNA)
+head(brca_342obj@meta.data, 5)
+# Visualize QC metrics as a violin plot
+VlnPlot(brca_342obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+plot1_342 <- FeatureScatter(brca_342obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_342 <- FeatureScatter(brca_342obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_342 + plot2_342
+#Determine number of cells/sample
+nrow(brca_342obj) 
+#Subset data based on trends throughout patients: Trying nFeature_RNA >200,<8000; percent.mt <10
+brca_342obj <- subset(brca_342obj, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+
+
+#Patient 343
+brca_343obj[["percent.mt"]] <- PercentageFeatureSet(brca_343obj, pattern = "^MT-")
+# Add number of genes per UMI for each cell to metadata
+brca_343obj$log10GenesPerUMI <- log10(brca_343obj$nFeature_RNA) / log10(brca_343obj$nCount_RNA)
+head(brca_343obj@meta.data, 5)
+# Visualize QC metrics as a violin plot
+VlnPlot(brca_343obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+plot1_343 <- FeatureScatter(brca_343obj, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2_343 <- FeatureScatter(brca_343obj, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1_343 + plot2_343
+#Determine number of cells/sample
+nrow(brca_343obj) 
+#Subset data based on trends throughout patients: Trying nFeature_RNA >200,<8000; percent.mt <10
+brca_343obj <- subset(brca_343obj, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+
+```
+
+```{r}
+#Normalizing the data from each patient
+
+brca_334obj  <- NormalizeData(brca_334obj)
+brca_335obj  <- NormalizeData(brca_335obj) 
+brca_336obj  <- NormalizeData(brca_336obj) 
+brca_337obj  <- NormalizeData(brca_337obj) 
+brca_338obj  <- NormalizeData(brca_338obj) 
+brca_339obj  <- NormalizeData(brca_339obj) 
+brca_340obj  <- NormalizeData(brca_340obj) 
+brca_341obj  <- NormalizeData(brca_341obj) 
+brca_342obj  <- NormalizeData(brca_342obj) 
+brca_343obj  <- NormalizeData(brca_343obj)
+```
+```{r}
+#Finding variable features for each patient
+
+#Patient 334
+brca_334obj <- FindVariableFeatures(brca_334obj, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10_334 <- head(VariableFeatures(brca_334obj), 10)
+# plot variable features with and without labels
+plot1_334 <- VariableFeaturePlot(brca_334obj)
+plot2_334 <- LabelPoints(plot = plot1_334, points = top10_334, repel = TRUE)
+plot1_334 + plot2_334
+
+#Patient 335
+brca_335obj <- FindVariableFeatures(brca_335obj, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10_335 <- head(VariableFeatures(brca_335obj), 10)
+# plot variable features with and without labels
+plot1_335 <- VariableFeaturePlot(brca_335obj)
+plot2_335 <- LabelPoints(plot = plot1_335, points = top10_335, repel = TRUE)
+plot1_335 + plot2_335
+
+#Patient 336
+brca_336obj <- FindVariableFeatures(brca_336obj, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10_336 <- head(VariableFeatures(brca_336obj), 10)
+# plot variable features with and without labels
+plot1_336 <- VariableFeaturePlot(brca_336obj)
+plot2_336 <- LabelPoints(plot = plot1_336, points = top10_336, repel = TRUE)
+plot1_336 + plot2_336
+
+#Patient 337
+brca_337obj <- FindVariableFeatures(brca_337obj, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10_337 <- head(VariableFeatures(brca_337obj), 10)
+# plot variable features with and without labels
+plot1_337 <- VariableFeaturePlot(brca_337obj)
+plot2_337 <- LabelPoints(plot = plot1_337, points = top10_337, repel = TRUE)
+plot1_337 + plot2_337
+
+#Patient 338
+brca_338obj <- FindVariableFeatures(brca_338obj, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10_338 <- head(VariableFeatures(brca_338obj), 10)
+# plot variable features with and without labels
+plot1_338 <- VariableFeaturePlot(brca_338obj)
+plot2_338 <- LabelPoints(plot = plot1_338, points = top10_338, repel = TRUE)
+plot1_338 + plot2_338
+
+#Patient 339
+brca_339obj <- FindVariableFeatures(brca_339obj, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10_339 <- head(VariableFeatures(brca_339obj), 10)
+# plot variable features with and without labels
+plot1_339 <- VariableFeaturePlot(brca_339obj)
+plot2_339 <- LabelPoints(plot = plot1_339, points = top10_339, repel = TRUE)
+plot1_339 + plot2_339
+
+#Patient 340
+brca_340obj <- FindVariableFeatures(brca_340obj, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10_340 <- head(VariableFeatures(brca_340obj), 10)
+# plot variable features with and without labels
+plot1_340 <- VariableFeaturePlot(brca_340obj)
+plot2_340 <- LabelPoints(plot = plot1_340, points = top10_340, repel = TRUE)
+plot1_340 + plot2_340
+
+#Patient 341
+brca_341obj <- FindVariableFeatures(brca_341obj, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10_341 <- head(VariableFeatures(brca_341obj), 10)
+# plot variable features with and without labels
+plot1_341 <- VariableFeaturePlot(brca_341obj)
+plot2_341 <- LabelPoints(plot = plot1_341, points = top10_341, repel = TRUE)
+plot1_341 + plot2_341
+
+#Patient 342
+brca_342obj <- FindVariableFeatures(brca_342obj, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10_342 <- head(VariableFeatures(brca_342obj), 10)
+# plot variable features with and without labels
+plot1_342 <- VariableFeaturePlot(brca_342obj)
+plot2_342 <- LabelPoints(plot = plot1_342, points = top10_342, repel = TRUE)
+plot1_342 + plot2_342
+
+#Patient 343
+brca_343obj <- FindVariableFeatures(brca_343obj, selection.method = "vst", nfeatures = 2000)
+# Identify the 10 most highly variable genes
+top10_343 <- head(VariableFeatures(brca_343obj), 10)
+# plot variable features with and without labels
+plot1_343 <- VariableFeaturePlot(brca_343obj)
+plot2_343 <- LabelPoints(plot = plot1_343, points = top10_343, repel = TRUE)
+plot1_343 + plot2_343
+```
+```{r}
+#Scale data: Shifts the expression of each gene, so that the mean expression across cells is 0
+#Scales the expression of each gene, so that the variance across cells is 1
+#This step gives equal weight in downstream analyses, so that highly-expressed genes do not dominate
+#The results of this are stored in pbmc[["RNA"]]$scale.data
+#By default, only variable features are scaled.
+
+#Patient 334
+#all.genes_334 <- rownames(brca_334obj)
+#brca_334obj <- ScaleData(brca_334obj, features = all.genes_334)
+
+brca_334obj <- ScaleData(brca_334obj, verbose = FALSE)
+
+#Patient 335
+brca_335obj <- ScaleData(brca_335obj, verbose = FALSE)
+
+#Patient 336
+brca_336obj <- ScaleData(brca_336obj, verbose = FALSE)
+
+#Patient 337
+#all.genes_337 <- rownames(brca_337obj)
+brca_337obj <- ScaleData(brca_337obj, verbose = FALSE)
+#brca_337obj <- ScaleData(brca_337obj, features = all.genes_337)
+
+#Patient 338
+brca_338obj <- ScaleData(brca_338obj, verbose = FALSE)
+
+#Patient 339
+brca_339obj <- ScaleData(brca_339obj, verbose = FALSE)
+
+#Patient 340
+brca_340obj <- ScaleData(brca_340obj, verbose = FALSE)
+
+#Patient 341
+brca_341obj <- ScaleData(brca_341obj, verbose = FALSE)
+
+#Patient 342
+brca_342obj <- ScaleData(brca_342obj, verbose = FALSE)
+
+#Patient 343
+brca_343obj <- ScaleData(brca_343obj, verbose = FALSE)
+```
+
+```{r}
+#Patient 334
+#Linear dimensional reduction (PCA)
+brca_334obj <- RunPCA(brca_334obj, features = VariableFeatures(object = brca_334obj))
+# Examine and visualize PCA results
+print(brca_334obj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(brca_334obj, dims = 1:2, reduction = "pca")
+DimPlot(brca_334obj, reduction = "pca") + NoLegend()
+DimHeatmap(brca_334obj, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(brca_334obj, dims = 1:15, cells = 500, balanced = TRUE)
+#Determine appropriate number of PCs
+#Shows about 20 PCs explain the data
+ElbowPlot(brca_334obj, ndims = 50)
+#Make a UMAP using the previously defined 35 PCs
+
+#Run UMAP
+brca_334UMAP <- RunUMAP(brca_334obj, dims = 1:35)
+
+#Louvain algorithm
+brca_334UMAP <- FindNeighbors(brca_334UMAP, dims = 1:35)
+brca_334UMAP <- FindClusters(brca_334UMAP, resolution = 0.2)
+head(Idents(brca_334UMAP), 5)
+
+# individual clusters
+DimPlot(brca_334UMAP, reduction = "umap")
+saveRDS(brca_334UMAP, file = "../project/brca_334UMAP.rds")
+
+
+####################################
+#plot T cell genes to find T cell cluster
+genes_to_plot = c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+FeaturePlot(brca_334UMAP, reduction = "umap", features = genes_to_plot)
+
+#make T cell panel
+t_cell_panel <-c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+VlnPlot(brca_334UMAP, features = t_cell_panel)
+
+#TCELLS ARE CLUSTER 9
+
+#make cluster ids
+brca_334.new.cluster.ids <- c("0", '1', "2", 
+                     '3', '4', '5',
+                     '6', "7", "8",'T cells', '10', '11', '12'
+                     )
+names(brca_334.new.cluster.ids) <- levels(brca_334UMAP)
+levels(brca_334UMAP)
+brca_334UMAP <- RenameIdents(brca_334UMAP, brca_334.new.cluster.ids)
+
+#look at all different clusters
+levels(brca_334UMAP)
+#subset based on cd4+ t cells
+tcell.brca_334 <- subset(brca_334UMAP, idents = c('T cells'))
+levels(tcell.brca_334)
+```
+
+
+```{r}
+#Patient 335
+#Linear dimensional reduction (PCA)
+brca_335obj <- RunPCA(brca_335obj, features = VariableFeatures(object = brca_335obj))
+# Examine and visualize PCA results
+print(brca_335obj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(brca_335obj, dims = 1:2, reduction = "pca")
+DimPlot(brca_335obj, reduction = "pca") + NoLegend()
+DimHeatmap(brca_335obj, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(brca_335obj, dims = 1:15, cells = 500, balanced = TRUE)
+#Determine appropriate number of PCs
+#Shows about 20 PCs explain the data
+ElbowPlot(brca_335obj, ndims = 50)
+#Make a UMAP using the previously defined 35 PCs
+
+#Run UMAP
+brca_335UMAP <- RunUMAP(brca_335obj, dims = 1:35)
+
+#Louvain algorithm
+brca_335UMAP <- FindNeighbors(brca_335UMAP, dims = 1:35)
+brca_335UMAP <- FindClusters(brca_335UMAP, resolution = 0.2)
+head(Idents(brca_335UMAP), 5)
+
+# individual clusters
+DimPlot(brca_335UMAP, reduction = "umap")
+saveRDS(brca_335UMAP, file = "../project/brca_335UMAP.rds")
+
+#plot T cell genes to find T cell cluster
+genes_to_plot = c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+FeaturePlot(brca_335UMAP, reduction = "umap", features = genes_to_plot)
+
+#make T cell panel
+t_cell_panel <-c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+VlnPlot(brca_335UMAP, features = t_cell_panel)
+
+#TCELLS ARE CLUSTER 1 and 4
+
+#make cluster ids
+brca_335.new.cluster.ids <- c("0", 'T cells', "2", 
+                     '3', 'CD4', '5',
+                     '6'
+                     )
+names(brca_335.new.cluster.ids) <- levels(brca_335UMAP)
+levels(brca_335UMAP)
+brca_335UMAP <- RenameIdents(brca_335UMAP, brca_335.new.cluster.ids)
+
+#look at all different clusters
+levels(brca_335UMAP)
+#subset based on cd4+ t cells
+tcell.brca_335 <- subset(brca_335UMAP, idents = c('T cells', 'CD4'))
+levels(tcell.brca_335)
+```
+```{r}
+#Patient 336
+#Linear dimensional reduction (PCA)
+brca_336obj <- RunPCA(brca_336obj, features = VariableFeatures(object = brca_336obj))
+# Examine and visualize PCA results
+print(brca_336obj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(brca_336obj, dims = 1:2, reduction = "pca")
+DimPlot(brca_336obj, reduction = "pca") + NoLegend()
+DimHeatmap(brca_336obj, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(brca_336obj, dims = 1:15, cells = 500, balanced = TRUE)
+#Determine appropriate number of PCs
+#Shows about 20 PCs explain the data
+ElbowPlot(brca_336obj, ndims = 50)
+#Make a UMAP using the previously defined 35 PCs
+
+#Run UMAP
+brca_336UMAP <- RunUMAP(brca_336obj, dims = 1:35)
+
+#Louvain algorithm
+brca_336UMAP <- FindNeighbors(brca_336UMAP, dims = 1:35)
+brca_336UMAP <- FindClusters(brca_336UMAP, resolution = 0.2)
+head(Idents(brca_336UMAP), 5)
+
+# individual clusters
+DimPlot(brca_336UMAP, reduction = "umap")
+saveRDS(brca_336UMAP, file = "../project/brca_336UMAP.rds")
+
+
+#plot T cell genes to find T cell cluster
+genes_to_plot = c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+FeaturePlot(brca_336UMAP, reduction = "umap", features = genes_to_plot)
+
+#make T cell panel
+t_cell_panel <-c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+VlnPlot(brca_336UMAP, features = t_cell_panel)
+
+#TCELLS ARE CLUSTER 4
+
+#make cluster ids
+brca_336.new.cluster.ids <- c("0", '1', "2", '3',
+                     'T cells', '5', '6', '7', '8'
+                     )
+names(brca_336.new.cluster.ids) <- levels(brca_336UMAP)
+levels(brca_336UMAP)
+brca_336UMAP <- RenameIdents(brca_336UMAP, brca_336.new.cluster.ids)
+
+#look at all different clusters
+levels(brca_336UMAP)
+#subset based on cd4+ t cells
+tcell.brca_336 <- subset(brca_336UMAP, idents = c('T cells'))
+levels(tcell.brca_336)
+
+```
+
+```{r}
+#Patient 337
+#Linear dimensional reduction (PCA)
+brca_337obj <- RunPCA(brca_337obj, features = VariableFeatures(object = brca_337obj))
+# Examine and visualize PCA results
+print(brca_337obj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(brca_337obj, dims = 1:2, reduction = "pca")
+DimPlot(brca_337obj, reduction = "pca") + NoLegend()
+DimHeatmap(brca_337obj, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(brca_337obj, dims = 1:15, cells = 500, balanced = TRUE)
+#Determine appropriate number of PCs
+#Shows about 20 PCs explain the data
+ElbowPlot(brca_337obj, ndims = 50)
+#Make a UMAP using the previously defined 35 PCs
+
+#Run UMAP
+brca_337UMAP <- RunUMAP(brca_337obj, dims = 1:35)
+
+#Louvain algorithm
+brca_337UMAP <- FindNeighbors(brca_337UMAP, dims = 1:35)
+brca_337UMAP <- FindClusters(brca_337UMAP, resolution = 0.2)
+head(Idents(brca_337UMAP), 5)
+
+# individual clusters
+DimPlot(brca_337UMAP, reduction = "umap", label = TRUE, repel = TRUE)
+saveRDS(brca_337UMAP, file = "../project/brca_334UMAP.rds")
+
+#plot T cell genes to find T cell cluster
+genes_to_plot = c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+FeaturePlot(brca_337UMAP, reduction = "umap", features = genes_to_plot)
+
+#make T cell panel
+t_cell_panel <-c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+VlnPlot(brca_337UMAP, features = t_cell_panel)
+
+#TCELLS ARE CLUSTER 0 and 8?
+
+#make cluster ids
+brca_337.new.cluster.ids <- c("T cells", '1', "2", '3',
+                     '4', '5', '6', '7', 'CD4'
+                     )
+names(brca_337.new.cluster.ids) <- levels(brca_337UMAP)
+levels(brca_337UMAP)
+brca_337UMAP <- RenameIdents(brca_337UMAP, brca_337.new.cluster.ids)
+
+#look at all different clusters
+levels(brca_337UMAP)
+#subset based on cd4+ t cells
+tcell.brca_337 <- subset(brca_337UMAP, idents = c('T cells', 'CD4'))
+levels(tcell.brca_337)
+
+```
+```{r}
+#Patient 338
+#Linear dimensional reduction (PCA)
+brca_338obj <- RunPCA(brca_338obj, features = VariableFeatures(object = brca_338obj))
+# Examine and visualize PCA results
+print(brca_338obj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(brca_338obj, dims = 1:2, reduction = "pca")
+DimPlot(brca_338obj, reduction = "pca") + NoLegend()
+DimHeatmap(brca_338obj, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(brca_338obj, dims = 1:15, cells = 500, balanced = TRUE)
+#Determine appropriate number of PCs
+#Shows about 20 PCs explain the data
+ElbowPlot(brca_338obj, ndims = 50)
+#Make a UMAP using the previously defined 35 PCs
+
+#Run UMAP
+brca_338UMAP <- RunUMAP(brca_338obj, dims = 1:35)
+
+#Louvain algorithm
+brca_338UMAP <- FindNeighbors(brca_338UMAP, dims = 1:35)
+brca_338UMAP <- FindClusters(brca_338UMAP, resolution = 0.2)
+head(Idents(brca_338UMAP), 5)
+
+# individual clusters
+DimPlot(brca_338UMAP, reduction = "umap")
+saveRDS(brca_338UMAP, file = "../project/brca_338UMAP.rds")
+
+#plot T cell genes to find T cell cluster
+genes_to_plot = c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+FeaturePlot(brca_338UMAP, reduction = "umap", features = genes_to_plot)
+
+#make T cell panel
+t_cell_panel <-c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+VlnPlot(brca_338UMAP, features = t_cell_panel)
+
+#TCELLS ARE CLUSTER 0 & 3...or 5?
+
+#make cluster ids
+brca_338.new.cluster.ids <- c("T cells", '1', "2", 'T cells1',
+                     '4', 'CD4', '6', '7', '8', '9'
+                     )
+names(brca_338.new.cluster.ids) <- levels(brca_338UMAP)
+levels(brca_338UMAP)
+brca_338UMAP <- RenameIdents(brca_338UMAP, brca_338.new.cluster.ids)
+
+#look at all different clusters
+levels(brca_338UMAP)
+#subset based on cd4+ t cells
+tcell.brca_338 <- subset(brca_338UMAP, idents = c('T cells','T cells1', 'CD4'))
+levels(tcell.brca_338)
+```
+
+```{r}
+#Patient 339
+#Linear dimensional reduction (PCA)
+brca_339obj <- RunPCA(brca_339obj, features = VariableFeatures(object = brca_339obj))
+# Examine and visualize PCA results
+print(brca_339obj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(brca_339obj, dims = 1:2, reduction = "pca")
+DimPlot(brca_339obj, reduction = "pca") + NoLegend()
+DimHeatmap(brca_339obj, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(brca_339obj, dims = 1:15, cells = 500, balanced = TRUE)
+#Determine appropriate number of PCs
+#Shows about 20 PCs explain the data
+ElbowPlot(brca_339obj, ndims = 50)
+#Make a UMAP using the previously defined 35 PCs
+
+#Run UMAP
+brca_339UMAP <- RunUMAP(brca_339obj, dims = 1:35)
+
+#Louvain algorithm
+brca_339UMAP <- FindNeighbors(brca_339UMAP, dims = 1:35)
+brca_339UMAP <- FindClusters(brca_339UMAP, resolution = 0.2)
+head(Idents(brca_339UMAP), 5)
+
+# individual clusters
+DimPlot(brca_339UMAP, reduction = "umap")
+saveRDS(brca_339UMAP, file = "../project/brca_339UMAP.rds")
+
+#plot T cell genes to find T cell cluster
+genes_to_plot = c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+FeaturePlot(brca_339UMAP, reduction = "umap", features = genes_to_plot)
+
+#make T cell panel
+t_cell_panel <-c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+VlnPlot(brca_339UMAP, features = t_cell_panel)
+
+#TCELLS ARE CLUSTER 0, 3...6?
+
+#make cluster ids
+brca_339.new.cluster.ids <- c("T cells", '1', "2", 'T cells1',
+                     '4', '5', 'CD4', '7'
+                     )
+names(brca_339.new.cluster.ids) <- levels(brca_339UMAP)
+levels(brca_339UMAP)
+brca_339UMAP <- RenameIdents(brca_339UMAP, brca_339.new.cluster.ids)
+
+#look at all different clusters
+levels(brca_339UMAP)
+#subset based on cd4+ t cells
+tcell.brca_339 <- subset(brca_339UMAP, idents = c('T cells','T cells1', 'CD4'))
+levels(tcell.brca_339)
+```
+
+```{r}
+#Patient 340
+#Linear dimensional reduction (PCA)
+brca_340obj <- RunPCA(brca_340obj, features = VariableFeatures(object = brca_340obj))
+# Examine and visualize PCA results
+print(brca_340obj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(brca_340obj, dims = 1:2, reduction = "pca")
+DimPlot(brca_340obj, reduction = "pca") + NoLegend()
+DimHeatmap(brca_340obj, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(brca_340obj, dims = 1:15, cells = 500, balanced = TRUE)
+#Determine appropriate number of PCs
+#Shows about 20 PCs explain the data
+ElbowPlot(brca_340obj, ndims = 50)
+#Make a UMAP using the previously defined 35 PCs
+
+#Run UMAP
+brca_340UMAP <- RunUMAP(brca_340obj, dims = 1:35)
+
+#Louvain algorithm
+brca_340UMAP <- FindNeighbors(brca_340UMAP, dims = 1:35)
+brca_340UMAP <- FindClusters(brca_340UMAP, resolution = 0.2)
+head(Idents(brca_340UMAP), 5)
+
+# individual clusters
+DimPlot(brca_340UMAP, reduction = "umap")
+saveRDS(brca_340UMAP, file = "../project/brca_340UMAP.rds")
+
+#plot T cell genes to find T cell cluster
+genes_to_plot = c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+FeaturePlot(brca_340UMAP, reduction = "umap", features = genes_to_plot)
+
+#make T cell panel
+t_cell_panel <-c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+VlnPlot(brca_340UMAP, features = t_cell_panel)
+
+#TCELLS ARE CLUSTER 4...or 7
+
+#make cluster ids
+brca_340.new.cluster.ids <- c("0", '1', "2", '3',
+                     'T cells', '5', '6', 'CD4', '8', '9', '10', '11'
+                     )
+names(brca_340.new.cluster.ids) <- levels(brca_340UMAP)
+levels(brca_340UMAP)
+brca_340UMAP <- RenameIdents(brca_340UMAP, brca_340.new.cluster.ids)
+
+#look at all different clusters
+levels(brca_340UMAP)
+#subset based on cd4+ t cells
+tcell.brca_340 <- subset(brca_340UMAP, idents = c('T cells', 'CD4'))
+levels(tcell.brca_340)
+```
+
+
+```{r}
+#Patient 341
+#Linear dimensional reduction (PCA)
+brca_341obj <- RunPCA(brca_341obj, features = VariableFeatures(object = brca_341obj))
+# Examine and visualize PCA results
+print(brca_341obj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(brca_341obj, dims = 1:2, reduction = "pca")
+DimPlot(brca_341obj, reduction = "pca") + NoLegend()
+DimHeatmap(brca_341obj, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(brca_341obj, dims = 1:15, cells = 500, balanced = TRUE)
+#Determine appropriate number of PCs
+#Shows about 20 PCs explain the data
+ElbowPlot(brca_341obj, ndims = 50)
+#Make a UMAP using the previously defined 35 PCs
+
+#Run UMAP
+brca_341UMAP <- RunUMAP(brca_341obj, dims = 1:35)
+
+#Louvain algorithm
+brca_341UMAP <- FindNeighbors(brca_341UMAP, dims = 1:35)
+brca_341UMAP <- FindClusters(brca_341UMAP, resolution = 0.2)
+head(Idents(brca_341UMAP), 5)
+
+# individual clusters
+DimPlot(brca_341UMAP, reduction = "umap")
+saveRDS(brca_341UMAP, file = "../project/brca_341UMAP.rds")
+
+#plot T cell genes to find T cell cluster
+genes_to_plot = c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+FeaturePlot(brca_341UMAP, reduction = "umap", features = genes_to_plot)
+
+#make T cell panel
+t_cell_panel <-c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+VlnPlot(brca_341UMAP, features = t_cell_panel)
+
+#TCELLS ARE CLUSTER 3...8 or 9?
+
+#make cluster ids
+brca_341.new.cluster.ids <- c("0", '1', "2", 'T cells',
+                     '4', '5', '6', '7', 'CD4', 'CD4_1'
+                     )
+names(brca_341.new.cluster.ids) <- levels(brca_341UMAP)
+levels(brca_341UMAP)
+brca_341UMAP <- RenameIdents(brca_341UMAP, brca_341.new.cluster.ids)
+
+#look at all different clusters
+levels(brca_341UMAP)
+#subset based on cd4+ t cells
+tcell.brca_341 <- subset(brca_341UMAP, idents = c('T cells', 'CD4', 'CD4_1'))
+levels(tcell.brca_341)
+```
+
+```{r}
+#Patient 342
+#Linear dimensional reduction (PCA)
+brca_342obj <- RunPCA(brca_342obj, features = VariableFeatures(object = brca_342obj))
+# Examine and visualize PCA results
+print(brca_342obj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(brca_342obj, dims = 1:2, reduction = "pca")
+DimPlot(brca_342obj, reduction = "pca") + NoLegend()
+DimHeatmap(brca_342obj, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(brca_342obj, dims = 1:15, cells = 500, balanced = TRUE)
+#Determine appropriate number of PCs
+#Shows about 20 PCs explain the data
+ElbowPlot(brca_342obj, ndims = 50)
+#Make a UMAP using the previously defined 35 PCs
+
+#Run UMAP
+brca_342UMAP <- RunUMAP(brca_342obj, dims = 1:35)
+
+#Louvain algorithm
+brca_342UMAP <- FindNeighbors(brca_342UMAP, dims = 1:35)
+brca_342UMAP <- FindClusters(brca_342UMAP, resolution = 0.2)
+head(Idents(brca_342UMAP), 5)
+
+# individual clusters
+DimPlot(brca_342UMAP, reduction = "umap")
+saveRDS(brca_342UMAP, file = "../project/brca_342UMAP.rds")
+
+#plot T cell genes to find T cell cluster
+genes_to_plot = c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+FeaturePlot(brca_342UMAP, reduction = "umap", features = genes_to_plot)
+
+#make T cell panel
+t_cell_panel <-c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+VlnPlot(brca_342UMAP, features = t_cell_panel)
+
+#TCELLS ARE CLUSTER 3
+
+#make cluster ids
+brca_342.new.cluster.ids <- c("0", '1', "2", 'T cells',
+                     '4', '5', '6', '7', '8', '9'
+                     )
+names(brca_342.new.cluster.ids) <- levels(brca_342UMAP)
+levels(brca_342UMAP)
+brca_342UMAP <- RenameIdents(brca_342UMAP, brca_342.new.cluster.ids)
+
+#look at all different clusters
+levels(brca_342UMAP)
+#subset based on cd4+ t cells
+tcell.brca_342 <- subset(brca_342UMAP, idents = c('T cells'))
+levels(tcell.brca_342)
+```
+
+```{r}
+#Patient 343
+#Linear dimensional reduction (PCA)
+brca_343obj <- RunPCA(brca_343obj, features = VariableFeatures(object = brca_343obj))
+# Examine and visualize PCA results
+print(brca_343obj[["pca"]], dims = 1:5, nfeatures = 5)
+VizDimLoadings(brca_343obj, dims = 1:2, reduction = "pca")
+DimPlot(brca_343obj, reduction = "pca") + NoLegend()
+DimHeatmap(brca_343obj, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(brca_343obj, dims = 1:15, cells = 500, balanced = TRUE)
+#Determine appropriate number of PCs
+#Shows about 20 PCs explain the data
+ElbowPlot(brca_343obj, ndims = 50)
+#Make a UMAP using the previously defined 35 PCs
+
+#Run UMAP
+brca_343UMAP <- RunUMAP(brca_343obj, dims = 1:35)
+
+#Louvain algorithm
+brca_343UMAP <- FindNeighbors(brca_343UMAP, dims = 1:35)
+brca_343UMAP <- FindClusters(brca_343UMAP, resolution = 0.2)
+head(Idents(brca_343UMAP), 5)
+
+# individual clusters
+DimPlot(brca_343UMAP, reduction = "umap")
+saveRDS(brca_343UMAP, file = "../project/brca_343UMAP.rds")
+
+#plot T cell genes to find T cell cluster
+genes_to_plot = c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+FeaturePlot(brca_343UMAP, reduction = "umap", features = genes_to_plot)
+
+#make T cell panel
+t_cell_panel <-c('CD3E','CD8A','CD4','CCR7','EOMES','KLRD1')
+VlnPlot(brca_343UMAP, features = t_cell_panel)
+
+#TCELLS ARE CLUSTER 2...9?
+
+#make cluster ids
+brca_343.new.cluster.ids <- c("0", '1', "T cells", '3',
+                     '4', '5', '6', '7', '8', 'CD4', '10'
+                     )
+names(brca_343.new.cluster.ids) <- levels(brca_343UMAP)
+levels(brca_343UMAP)
+brca_343UMAP <- RenameIdents(brca_343UMAP, brca_343.new.cluster.ids)
+
+#look at all different clusters
+levels(brca_343UMAP)
+#subset based on cd4+ t cells
+tcell.brca_343 <- subset(brca_343UMAP, idents = c('T cells'))
+levels(tcell.brca_343)
+```
+
+```{r}
+#Identities of BRCA mutation:
+#334 BRCA2
+#335 BRCA1
+#336 BRAC1
+#337 BRCA2
+#338 BRCA1
+#339 BRCA1
+#340 BRCA2
+#341 BRCA1
+#342 BRCA2
+#343 BRCA1
+
+#integrate all BRCA1 T cell clusters
+reference.list1 <- c(tcell.brca_335, tcell.brca_336, tcell.brca_338, tcell.brca_339, tcell.brca_341, tcell.brca_343)
+features1 <- SelectIntegrationFeatures(object.list = reference.list1)
+BRCA1.anchors <- FindIntegrationAnchors(object.list = reference.list1, anchor.features = features1)
+BRCA1_integrated_data <- IntegrateData(anchorset = BRCA1.anchors)
+saveRDS(BRCA1_integrated_data, file = "../project/BRCA1_integrated_tcelldata.rds")
+
+#integrate all BRCA2 T cell clusters
+reference.list2 <- c(tcell.brca_334, tcell.brca_337, tcell.brca_340, tcell.brca_342)
+features2 <- SelectIntegrationFeatures(object.list = reference.list2)
+BRCA2.anchors <- FindIntegrationAnchors(object.list = reference.list2, anchor.features = features2)
+BRCA2_integrated_data <- IntegrateData(anchorset = BRCA2.anchors)
+saveRDS(BRCA2_integrated_data, file = "../project/BRCA2_integrated_tcelldata.rds")
+
+```
