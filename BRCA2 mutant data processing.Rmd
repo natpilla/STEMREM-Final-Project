@@ -1,0 +1,105 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+#Performs data processing on each of the sc-RNA seq BRCA2 patient samples
+
+```{r}
+library(hdf5r)
+library(Seurat)
+library(dplyr)
+setwd("/Users/nataliepilla/Downloads/GSE223886_RAW")
+```
+
+
+```{r} 
+setwd("/Users/nataliepilla/Downloads/GSE223886_RAW")
+#read in the file and create seurat object
+sample1.data = Read10X_h5("GSM6998334_EH1906-01B_filtered_feature_bc_matrix.h5")
+sample1 <- CreateSeuratObject(counts = sample1.data, project = "sample1", min.cells = 3, min.features = 200)
+sample1
+```
+
+
+```{r}
+#Data processing for sample 1, which is BRCA2 mut
+sample1[["percent.mt"]] <- PercentageFeatureSet(sample1, pattern = "^MT-")
+sample1 <- subset(sample1, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+sample1 <- NormalizeData(sample1)
+sample1 <- FindVariableFeatures(sample1, selection.method = "vst", nfeatures = 2000)
+sample1 <- ScaleData(sample1, verbose = FALSE)
+sample1 <- RunPCA(sample1, features = VariableFeatures(object = sample1))
+sample1 <- RunUMAP(sample1, dims = 1:35, verbose = FALSE)
+sample1 <- FindNeighbors(sample1, dims = 1:35, verbose = FALSE)
+sample1 <- FindClusters(sample1, resolution = 0.2, verbose = FALSE)
+saveRDS(sample1, file = "/Users/nataliepilla/Downloads/EH1906_01B_processed.rds")
+```
+
+
+```{r}
+#If you want to view the indvidual sample processed data umaps
+#DimPlot(sample1, reduction = "umap", label = TRUE, repel = TRUE)
+```
+```{r}
+setwd("/Users/nataliepilla/Downloads/GSE223886_RAW")
+#sample 2 data processing
+sample2.data = Read10X_h5("GSM6998337_UH1908-22B_filtered_feature_bc_matrix.h5")
+sample2 <- CreateSeuratObject(counts = sample2.data, project = "sample2", min.cells = 3, min.features = 200)
+sample2
+sample2[["percent.mt"]] <- PercentageFeatureSet(sample2, pattern = "^MT-")
+sample2 <- subset(sample2, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+sample2 <- NormalizeData(sample2)
+sample2 <- FindVariableFeatures(sample2, selection.method = "vst", nfeatures = 2000)
+sample2 <- ScaleData(sample2, verbose = FALSE)
+sample2 <- RunPCA(sample2, features = VariableFeatures(object = sample2))
+ElbowPlot(sample2, ndims = 50)
+sample2 <- RunUMAP(sample2, dims = 1:35, verbose = FALSE)
+sample2 <- FindNeighbors(sample2, dims = 1:35, verbose = FALSE)
+sample2 <- FindClusters(sample2, resolution = 0.2, verbose = FALSE)
+saveRDS(sample2, file = "/Users/nataliepilla/Downloads/UH1908_22B_processed.rds")
+```
+
+```{r}
+#sample 3 data processing
+setwd("/Users/nataliepilla/Downloads/GSE223886_RAW")
+sample3.data = Read10X_h5("GSM6998340_UHB1907-02_filtered_feature_bc_matrix.h5")
+sample3 <- CreateSeuratObject(counts = sample3.data, project = "sample3", min.cells = 3, min.features = 200)
+sample3
+sample3[["percent.mt"]] <- PercentageFeatureSet(sample3, pattern = "^MT-")
+sample3 <- subset(sample3, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 10)
+sample3 <- NormalizeData(sample3)
+sample3 <- FindVariableFeatures(sample3, selection.method = "vst", nfeatures = 2000)
+sample3 <- ScaleData(sample3, verbose = FALSE)
+sample3 <- RunPCA(sample3, features = VariableFeatures(object = sample3))
+ElbowPlot(sample3, ndims = 50)
+sample3 <- RunUMAP(sample3, dims = 1:35, verbose = FALSE)
+sample3 <- FindNeighbors(sample3, dims = 1:35, verbose = FALSE)
+sample3 <- FindClusters(sample3, resolution = 0.2, verbose = FALSE)
+saveRDS(sample3, file = "/Users/nataliepilla/Downloads/UHB1907_02_processed.rds")
+```
+```{r}
+#sample 4 data processing
+setwd("/Users/nataliepilla/Downloads/GSE223886_RAW")
+sample4.data = Read10X_h5("GSM6998342_UHB2009-18B_filtered_feature_bc_matrix.h5")
+sample4 <- CreateSeuratObject(counts = sample4.data, project = "sample4", min.cells = 3, min.features = 200)
+sample4
+sample4[["percent.mt"]] <- PercentageFeatureSet(sample4, pattern = "^MT-")
+sample4 <- subset(sample4, subset = nFeature_RNA > 200 & nFeature_RNA < 8000 & percent.mt < 5)
+sample4 <- NormalizeData(sample4)
+sample4 <- FindVariableFeatures(sample4, selection.method = "vst", nfeatures = 2000)
+sample4 <- ScaleData(sample4, verbose = FALSE)
+sample4 <- RunPCA(sample4, features = VariableFeatures(object = sample4))
+ElbowPlot(sample4, ndims = 50)
+sample4 <- RunUMAP(sample4, dims = 1:35, verbose = FALSE)
+sample4 <- FindNeighbors(sample4, dims = 1:35, verbose = FALSE)
+sample4 <- FindClusters(sample4, resolution = 0.2, verbose = FALSE)
+saveRDS(sample4, file = "/Users/nataliepilla/Downloads/UHB2009_18B_processed.rds")
+```
+
+```
+
