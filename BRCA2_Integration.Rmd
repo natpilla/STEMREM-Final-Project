@@ -73,6 +73,9 @@ brca2_int <- FindNeighbors(brca2_int, dims = 1:30, verbose = FALSE)
 brca2_int <- FindClusters(brca2_int, resolution = 0.2, verbose = FALSE)
 DimPlot(brca2_int, reduction = "umap", label = TRUE, repel = TRUE)
 #DimPlot(brca2_int, reduction = "umap", group.by="version")
+
+#check samples are well integrated
+DimPlot(brca2_int, group.by = "orig.ident", reduction = "umap"
 ```
 ```{r}
 BRCA2.markers = FindAllMarkers(brca2_int, only.pos = TRUE)
